@@ -82,6 +82,7 @@ var Pico = function() {
 
     var audionum;
     var data = [];
+    var loadAudionum = 0;
     effectdata = {};
 
     //mic
@@ -89,13 +90,16 @@ var Pico = function() {
       var inputData = function func() {
         usingAudio(inputState);
       }
-    }
-    if (inputState.type === "mic") {
+    } else if (inputState.type === "mic") {
       var inputData = function func() {
         usingMic(inputState);
       }
     }
-    micfunc.addfunc(inputData);
+    micfunc.addfunc(function func() {
+      loadAudionum++;
+      if (loadAudionum >= audionum) inputData(inputState);
+      else return true;
+    });
 
     if (!(audiofile instanceof Array)) {
       audionum = 1;
