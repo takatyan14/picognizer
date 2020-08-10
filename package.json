@@ -1,0 +1,31 @@
+{
+  "name": "picognizer",
+  "version": "0.0.1",
+  "description": "Detecting synthesized sounds from microphone",
+  "main": "picognizer.js",
+  "directories": {
+    "lib": "lib"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/takatyan14/picognizer.git"
+  },
+  "author": "takatyan14 <69407343+takatyan14@users.noreply.github.com>",
+  "bugs": {
+    "url": "https://github.com/takatyan/picognizer/issues"
+  },
+  "homepage": "https://github.com/takatyan/picognizer#readme",
+  "dependencies": {
+    "aac": "0.1.x",
+    "alac": "0.1.x",
+    "av": "^0.4.9",
+    "debug": "^4.1.1",
+    "flac": "0.3.x",
+    "meyda": "^5.0.3",
+    "mp3": "0.1.x",
+    "node-microphone": "^0.1.5"
+  }
+}

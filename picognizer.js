@@ -1,29 +1,32 @@
 var DTW = require("./lib/dtw");
 var dist = require("./lib/distanceFunctions/asymmetric.js");
 var Code = require("./code.js");
-require("./constants.js");
+var Meyda = require("meyda");
+var fs = require('fs');
+var AV = require('av')
+  , mp3 = require('mp3')
+  , flac = require('flac')
+  , alac = require('alac')
+  , aac = require('aac');
+var Microphone = require('node-microphone');
+const { exec } = require('child_process');
 
 var options = {};
 options.distanceFunction = dist.distance;
 var dtw = new DTW(options);
 var audio = {};
-var source = {};
-var acontext = new AudioContext();
-var mediaStream;
 var c = new Code();
 var micfunc = new Code();
+var inputfunc;
+var stopfunc = function () {};
 var repeatTimer;
-var meyda;
 var effectdata;
-const sr = 48000;
+var sr = 0;
 
 var Pico = function() {
 
   options = {
-    "audioContext": acontext,
-    "source": null,
     "bufferSize": null,
-    "windowingFunction": null,
     "featureExtractors": [],
     "framesec": null,
     "duration": null,
@@ -33,7 +36,7 @@ var Pico = function() {
     "inputOn": false,
     "output": false,
     "type": null,
-    "bgm": null
+    "power": 1
   };
 
   this.init = function(args) {
@@ -41,22 +44,21 @@ var Pico = function() {
       console.log("Default parameter (bufferSize: auto, window:hamming, feature: powerSpectrum)");
     }
 
-    if (args.windowFunc === undefined) options.windowingFunction = "hamming";
-    else options.windowingFunction = args.windowFunc;
-
     if (args.feature === undefined) options.featureExtractors = ["powerSpectrum"];
     else options.featureExtractors = args.feature;
 
     if (args.mode === undefined) options.mode = "dtw";
     else options.mode = args.mode;
 
-    if (args.inputType === undefined) inputState.type = "mic";
-    else {
-      inputState.type = args.inputType;
-      inputState.bgm = args.bgm;
-    }
-
-    if (args.micOutput === undefined) inputState.output = false;
+    if (args.inputType === "mic") {
+      inputState.type = "mic";
+      inputState.card = args.card;
+      inputState.subDevice = args.subDevice;
+    } else if (args.inputType === "audio") {
+      inputState.type = "audio";
+      inputState.file = args.file;
+    } else throw new Error("inputType must be specified.");
+    if (! isNaN(args.power)) inputState.power = parseFloat(args.power);
 
     if (args.framesec === undefined) options.framesec = 0.05;
     else options.framesec = args.framesec;
@@ -64,16 +66,9 @@ var Pico = function() {
     if (args.duration === undefined) options.duration = 1.0;
     else options.duration = args.duration;
 
-    if (args.bufferSize === undefined) options.bufferSize = detectPow(options.framesec*sr);
-    else options.bufferSize = args.bufferSize;
+    if (args.bufferSize !== undefined) options.bufferSize = args.bufferSize;
 
     if (options.slice != undefined) options.slice = args.slice;
-
-    if (options.bufferSize <= options.framesec*sr){
-      console.log("bufferSize should be a power of 2 greater than %d",options.framesec*sr);
-      options.bufferSize = detectPow(options.framesec*sr);
-      console.log("Set bufferSize: %d", options.bufferSize);
-    }
 
     return;
   };
@@ -125,11 +120,21 @@ var Pico = function() {
 
   this.stop = function() {
     console.log("Stoppped.");
-    meyda.stop();
+    stopfunc();
     clearInterval(repeatTimer);
     return;
   };
 };
+
+function determineBufferSize() {
+  if (options.bufferSize === null) options.bufferSize = detectPow(options.framesec*sr);
+
+  if (options.bufferSize <= options.framesec*sr){
+    console.log("bufferSize should be a power of 2 greater than %d",options.framesec*sr);
+    options.bufferSize = detectPow(options.framesec*sr);
+    console.log("Set bufferSize: %d", options.bufferSize);
+  }
+}
 
 function detectPow(value) {
   let n = 0;
@@ -140,53 +145,54 @@ function detectPow(value) {
 }
 
 function usingAudio(inputState) {
-
-  audio.inputsound = new Audio();
-  audio.inputsound.src = inputState.bgm;
-  audio.inputsound.crossOrigin = "anonymous";
-  audio.inputsound.addEventListener('loadstart', function() {
-    console.log("Audio file loaded!");
-    source.input = acontext.createMediaElementSource(audio.inputsound);
-    source.input.connect(acontext.destination);
-    inputState.inputOn = true;
-    audio.inputsound.play();
-  });
-
-  audio.inputsound.addEventListener('play', function() {
-    c.execfuncs();
-  });
-
-  audio.inputsound.addEventListener('ended', function() {
-    meyda.stop();
-    clearInterval(repeatTimer);
-    console.log("Stopped.");
+  console.log('using file');
+  fs.readFile(inputState.file, function(err, data) {
+    if (err) {
+      throw new Error('load target file failed!');
+    } else {
+      decodeAudioData(data, function (err, decodedBuf, sampleRate) {
+        if (err) throw err;
+        if (sr != sampleRate) {
+          throw new Error('input audio file sample rate mismatched!');
+        }
+        inputfunc = function () {
+          return decodedBuf;
+        }
+        inputState.inputOn = true;
+        c.execfuncs();
+      });
+    }
   });
 }
 
 //microphone
 function usingMic(inputState) {
   console.log("using mic");
-  if (!navigator.getUserMedia) {
-    alert('getUserMedia is not supported.');
-  }
-  navigator.getUserMedia({
-      video: false,
-      audio: true
-    },
-    function(stream) { //success
-      mediaStream = stream;
-      audio.inputsound = new Audio();
-      audio.inputsound.src = mediaStream;
-      source.input = acontext.createMediaStreamSource(mediaStream);
-      console.log("The microphone turned on.");
-      if (inputState.output === true) source.input.connect(acontext.destination);
-      inputState.inputOn = true;
-      c.execfuncs();
-    },
-    function(err) { //error
-      alert("Error accessing the microphone.");
+  const microphone = new Microphone({
+    channels: 1,
+    rate: sr,
+    device: 'plughw:' + inputState.card + ',' + inputState.subDevice,
+    bitwidth: 16,
+    endian: 'little',
+    encoding: 'signed-integer'
+  });
+
+  var stream = microphone.startRecording();
+  inputfunc = function () {
+    var chunks = [];
+    var chunk;
+    chunk = stream.read(options.bufferSize*2);
+    if (chunk === null) return null;
+    for (var i=0; i < chunk.length; i+=2) {
+      var val = chunk.readInt16LE(i) * inputState.power / 32768;
+      if (val > 1) val = 1; else if (val < -1) val = -1;
+      chunks.push(val);
     }
-  )
+    return chunks;
+  };
+  stopfunc = function () { microphone.stopRecording(); };
+  inputState.inputOn = true;
+  c.execfuncs();
 }
 
 function checkSpectrum(options) {
@@ -195,16 +201,38 @@ function checkSpectrum(options) {
 }
 
 function loadEffectAudio(audiofile, callback) {
-  var request = new XMLHttpRequest();
-  request.open('GET', audiofile, true);
-  request.responseType = 'arraybuffer';
+  fs.readFile(audiofile, function(err, data) {
+    if(!err) {
+      decodeAudioData(data, function(err2, buffer, sampleRate) {
+        if (err2) throw err2;
+        callback(buffer, sampleRate);
+      });
+    } else throw new Error('loading effect audio file failed!');
+  });
+}
 
-  request.onload = function() {
-    acontext.decodeAudioData(request.response, function(buffer) {
-      callback(buffer);
-    });
-  }
-  request.send();
+function decodeAudioData(buffer, done) {
+  var asset = AV.Asset.fromBuffer(buffer);
+
+  asset.on('error', function(err) {
+    done(err);
+  });
+
+  asset.decodeToBuffer(function(decoded) {
+    var deinterleaved = []
+      , numberOfChannels = asset.format.channelsPerFrame
+      , length = Math.floor(decoded.length / numberOfChannels);
+
+    if (numberOfChannels == 1) {
+      done(null, decoded, asset.format.sampleRate);
+      return;
+    }
+    for (var i=0; i < length; i++) {
+      deinterleaved.push(decoded.slice(i * numberOfChannels, (i+1) * numberOfChannels).reduce(function(a,b) { return a+b; }) / numberOfChannels);
+    }
+
+    done(null, deinterleaved, asset.format.sampleRate);
+  });
 }
 
 //sound effect
@@ -212,10 +240,16 @@ function loadAudio(filename, data, options) {
 
   var checkspec = checkSpectrum(options);
   var signal;
-  var framesize = sr * options.framesec;
+  var framesize;
 
-  loadEffectAudio(filename, function(buffer) {
-    signal = buffer.getChannelData(0);
+  loadEffectAudio(filename, function(signal, sampleRate) {
+    if (sr === 0 ) {
+      sr = sampleRate;
+      determineBufferSize();
+    } else if (sr != sampleRate)
+      throw new Error('Sample rates of audio files must be same!');
+
+    framesize = sr * options.framesec;
     let maxframe = Math.ceil(signal.length/ framesize);
     let frame = 0;
     let startframe = 0;
@@ -263,7 +297,7 @@ function costCalculation(effectdata, options, callback) {
   var checkspec = checkSpectrum(options);
   var effectlen = Object.keys(effectdata).length;
 
-  options.source = source.input;
+  Meyda.bufferSize = options.bufferSize;
 
   maxnum = effectdata[0].length;
   if (effectlen > 1) {
@@ -273,8 +307,6 @@ function costCalculation(effectdata, options, callback) {
     }
   }
   RingBufferSize = maxnum;
-
-  meyda = Meyda.createMeydaAnalyzer(options);
 
   console.log("calculating cost");
 
@@ -287,10 +319,11 @@ function costCalculation(effectdata, options, callback) {
   if (options.mode === "dtw") {
 
     console.log("========= dtw mode =========");
-    meyda.start(options.featureExtractors);
     setInterval(function() {
-      var features = meyda.get(options.featureExtractors[0]);
-      silbuff.add(meyda.get("rms"));
+      var signal = inputfunc();
+      if (signal === null || signal.length == 0) return;
+      var features = Meyda.extract(options.featureExtractors[0], signal);
+      silbuff.add(Meyda.extract("rms", signal));
       if (features != null) {
         if (checkspec === true) features = specNormalization(features, options);
         buff.add(features);
@@ -300,6 +333,7 @@ function costCalculation(effectdata, options, callback) {
     //cost
     repeatTimer = setInterval(function() {
       var buflen = buff.getCount();
+      if (silbuff.getCount() == 0) return;
       if (average(silbuff.buffer) < 0.0005){
         cost = Infinity;
         callback(cost);
@@ -325,11 +359,12 @@ function costCalculation(effectdata, options, callback) {
 
   }
   if (options.mode === "direct") {
-    meyda.start(options.featureExtractors);
     console.log("========= direct comparison mode =========");
     setInterval(function() {
-      silbuff.add(meyda.get("rms"));
-      var features = meyda.get(options.featureExtractors[0]);
+      var signal = inputfunc();
+      if (signal === null || signal.length == 0) return;
+      silbuff.add(Meyda.extract("rms", signal));
+      var features = Meyda.extract(options.featureExtractors[0], signal);
         if (features != null) {
           if (checkspec === true) features = specNormalization(features, options);
           buff.add(features);
@@ -343,6 +378,7 @@ function costCalculation(effectdata, options, callback) {
     //cost
     repeatTimer = setInterval(function() {
       buflen = buff.getCount();
+      if (silbuff.getCount() == 0) return;
       if (average(silbuff.buffer) < 0.0001){
         cost = Infinity;
         callback(cost);
