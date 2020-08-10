@@ -76,9 +76,8 @@ var Pico = function() {
   this.oncost = function(audiofile, callback) {
 
     var audionum;
-    var data = [];
     var loadAudionum = 0;
-    effectdata = {};
+    effectdata = [];
 
     //mic
     if (inputState.type === "audio" && inputState.inputOn === false) {
@@ -103,10 +102,9 @@ var Pico = function() {
     } else {
       audionum = audiofile.length;
       for (let n = 0; n < audionum; n++) {
-        data = [];
-        var key = String(n);
+        let data = [];
         loadAudio(audiofile[n], data, options);
-        effectdata[key] = data;
+        effectdata[n] = data;
       }
     }
 
@@ -295,15 +293,15 @@ function costCalculation(effectdata, options, callback) {
   var RingBufferSize;
   var maxnum;
   var checkspec = checkSpectrum(options);
-  var effectlen = Object.keys(effectdata).length;
+  var effectlen = effectdata.length;
 
   Meyda.bufferSize = options.bufferSize;
 
   maxnum = effectdata[0].length;
   if (effectlen > 1) {
-    for (var keyString in effectdata) {
-      if (maxnum < effectdata[keyString].length)
-        maxnum = effectdata[keyString].length;
+    for (const value of effectdata) {
+      if (maxnum < value.length)
+        maxnum = value.length;
     }
   }
   RingBufferSize = maxnum;
@@ -345,8 +343,8 @@ function costCalculation(effectdata, options, callback) {
             var cost = dtw.compute(buff.buffer, effectdata[0]);
           } else {
             var cost = [];
-            for (var keyString in effectdata) {
-              var tmp = dtw.compute(buff.getArray(effectdata[keyString].length), effectdata[keyString]);
+            for (const value of effectdata) {
+              var tmp = dtw.compute(buff.getArray(value.length), value);
               cost.push(tmp);
             }
           }
@@ -404,11 +402,11 @@ function distCalculation(effectdata, buff, effectlen, BufferSize) {
 
   } else {
     var d = [];
-    for (var keyString in effectdata) {
-      L = effectdata[keyString].length;
+    for (const value of effectdata) {
+      L = value.length;
       var tmp = 0;
       for (let n = L - 1; n > BufferSize - L; n--) {
-        tmp = tmp + dist.distance(buff.get(n), effectdata[keyString][n]);
+        tmp = tmp + dist.distance(buff.get(n), value[n]);
       }
       d.push(tmp);
     }
