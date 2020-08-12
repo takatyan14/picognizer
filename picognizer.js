@@ -312,7 +312,7 @@ function costCalculation(effectdata, options, callback) {
           } else {
             var cost = [];
             for (var keyString in effectdata) {
-              var tmp = dtw.compute(buff.buffer, effectdata[keyString]);
+              var tmp = dtw.compute(buff.getArray(effectdata[keyString].length), effectdata[keyString]);
               cost.push(tmp);
             }
           }
@@ -399,6 +399,14 @@ RingBuffer.prototype = {
       index += this.count;
     index %= this.buffer.length;
     return this.buffer[index];
+  },
+  // getArray(Number get_count): returns Array of nearest get_count elements.
+  getArray: function(get_count) {
+    var lastIndex = (this.count % this.buffer.length);
+    if (get_count <= lastIndex)
+      return this.buffer.slice(lastIndex - get_count , lastIndex);
+    else
+      return this.buffer.slice(lastIndex - get_count).concat(this.buffer.slice(0, lastIndex));
   },
   getCount: function() {
     return Math.min(this.buffer.length, this.count);
